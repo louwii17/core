@@ -117,6 +117,7 @@ from .const import (
     CONF_EXCLUDE_ACCESSORY_MODE,
     CONF_FILTER,
     CONF_HOMEKIT_MODE,
+    CONF_IRRIGATION_SYSTEMS,
     CONF_LINKED_BATTERY_CHARGING_SENSOR,
     CONF_LINKED_BATTERY_SENSOR,
     CONF_LINKED_DOORBELL_SENSOR,
@@ -124,12 +125,14 @@ from .const import (
     CONF_LINKED_MOTION_SENSOR,
     CONF_LINKED_PM25_SENSOR,
     CONF_LINKED_TEMPERATURE_SENSOR,
+    CONF_ZONES,
     CONFIG_OPTIONS,
     DEFAULT_EXCLUDE_ACCESSORY_MODE,
     DEFAULT_HOMEKIT_MODE,
     DEFAULT_PORT,
     DOMAIN,
     HOMEKIT_MODE_ACCESSORY,
+    HOMEKIT_MODE_BRIDGE,
     HOMEKIT_MODES,
     MANUFACTURER,
     PERSIST_LOCK_DATA,
@@ -141,6 +144,7 @@ from .const import (
 )
 from .iidmanager import AccessoryIIDStorage
 from .models import HomeKitConfigEntry, HomeKitEntryData
+from .type_irrigation_systems import IrrigationSystem
 from .type_triggers import DeviceTriggerAccessory
 from .util import (
     accessory_friendly_name,
@@ -151,6 +155,7 @@ from .util import (
     remove_state_files_for_entry_id,
     state_needs_accessory_mode,
     validate_entity_config,
+    validate_irrigation_systems,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,6 +201,16 @@ def _has_all_unique_names_and_ports(
     return bridges
 
 
+def _validate_irrigation_system_mode(config: dict[str, Any]) -> dict[str, Any]:
+    """Validate irrigation systems are only configured on a bridge."""
+    if (
+        config.get(CONF_IRRIGATION_SYSTEMS)
+        and config[CONF_HOMEKIT_MODE] != HOMEKIT_MODE_BRIDGE
+    ):
+        raise vol.Invalid("irrigation systems require HomeKit bridge mode")
+    return config
+
+
 BRIDGE_SCHEMA = vol.All(
     vol.Schema(
         {
@@ -212,10 +227,14 @@ BRIDGE_SCHEMA = vol.All(
             ),
             vol.Optional(CONF_FILTER, default={}): BASE_FILTER_SCHEMA,
             vol.Optional(CONF_ENTITY_CONFIG, default={}): validate_entity_config,
+            vol.Optional(
+                CONF_IRRIGATION_SYSTEMS, default={}
+            ): validate_irrigation_systems,
             vol.Optional(CONF_DEVICES): cv.ensure_list,
         },
         extra=vol.ALLOW_EXTRA,
     ),
+    _validate_irrigation_system_mode,
 )
 
 CONFIG_SCHEMA = vol.Schema(
@@ -370,6 +389,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeKitConfigEntry) -> b
     entity_config: dict[str, Any] = options.get(CONF_ENTITY_CONFIG, {}).copy()
     entity_filter: EntityFilter = FILTER_SCHEMA(options.get(CONF_FILTER, {}))
     devices: list[str] = options.get(CONF_DEVICES, [])
+    irrigation_systems: dict[str, dict[str, Any]] = options.get(
+        CONF_IRRIGATION_SYSTEMS, {}
+    )
 
     homekit = HomeKit(
         hass,
@@ -384,6 +406,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeKitConfigEntry) -> b
         entry.entry_id,
         entry.title,
         devices=devices,
+        irrigation_systems=irrigation_systems,
     )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -556,6 +579,7 @@ class HomeKit:
         entry_id: str,
         entry_title: str,
         devices: list[str] | None = None,
+        irrigation_systems: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Initialize a HomeKit object."""
         self.hass = hass
@@ -572,6 +596,7 @@ class HomeKit:
         self._entry_title = entry_title
         self._homekit_mode = homekit_mode
         self._devices = devices or []
+        self._irrigation_systems = irrigation_systems or {}
         self.aid_storage: AccessoryAidStorage | None = None
         self.iid_storage: AccessoryIIDStorage | None = None
         self.status = STATUS_READY
@@ -1057,11 +1082,59 @@ class HomeKit:
         assert self.driver is not None
 
         self.bridge = HomeBridge(self.hass, self.driver, self._name)
+        irrigation_zones = {
+            entity_id
+            for system in self._irrigation_systems.values()
+            for entity_id in system[CONF_ZONES]
+        }
         for state in entity_states:
+            if state.entity_id in irrigation_zones:
+                continue
             self.add_bridge_accessory(state)
+        self._async_add_irrigation_system_accessories()
         if self._devices:
             await self._async_add_trigger_accessories()
         return self.bridge
+
+    @callback
+    def _async_add_irrigation_system_accessories(self) -> None:
+        """Add configured irrigation systems to the bridge."""
+        assert self.aid_storage is not None
+        assert self.bridge is not None
+        assert self.driver is not None
+
+        for system_id, config in self._irrigation_systems.items():
+            if self._would_exceed_max_devices(config[CONF_NAME]):
+                continue
+            missing_zones = [
+                entity_id
+                for entity_id in config[CONF_ZONES]
+                if self.hass.states.get(entity_id) is None
+            ]
+            if missing_zones:
+                _LOGGER.warning(
+                    "HomeKit irrigation system %s has unavailable zones: %s",
+                    config[CONF_NAME],
+                    ", ".join(missing_zones),
+                )
+            accessory_id = f"irrigation_system.{system_id}"
+            aid = self.aid_storage.get_or_allocate_aid(accessory_id, accessory_id)
+            try:
+                self.bridge.add_accessory(
+                    IrrigationSystem(
+                        self.hass,
+                        self.driver,
+                        config[CONF_NAME],
+                        accessory_id,
+                        aid,
+                        config,
+                        self._config,
+                    )
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "Failed to create HomeKit irrigation system %s", config[CONF_NAME]
+                )
 
     async def _async_add_trigger_accessories(self) -> None:
         """Add devices with triggers to the bridge."""

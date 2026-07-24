@@ -691,6 +691,131 @@ async def test_options_flow_include_mode_basic(hass: HomeAssistant) -> None:
     await hass.config_entries.async_unload(config_entry.entry_id)
 
 
+async def test_options_flow_add_irrigation_system(hass: HomeAssistant) -> None:
+    """Test adding an irrigation system through bridge options."""
+    config_entry = _mock_config_entry_with_options_populated()
+    config_entry.add_to_hass(hass)
+    hass.states.async_set("valve.front", "closed")
+    hass.states.async_set("valve.back", "closed")
+    hass.states.async_set("sensor.program_mode", "scheduled")
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            "domains": ["valve"],
+            "include_exclude_mode": "include",
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"entities": ["valve.front", "valve.back"]},
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "irrigation_systems"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "add_irrigation_system"}
+    )
+    assert result["step_id"] == "add_irrigation_system"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "irrigation_system_name": "Yard",
+            "zones": ["valve.front", "valve.back"],
+            "linked_program_mode_sensor": "sensor.program_mode",
+        },
+    )
+    assert result["type"] is FlowResultType.MENU
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "finish_irrigation_systems"}
+    )
+    assert result["step_id"] == "bridged_device_triggers"
+    with patch("homeassistant.components.homekit.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+    system = next(iter(config_entry.options["irrigation_systems"].values()))
+    assert system == {
+        "name": "Yard",
+        "zones": ["valve.front", "valve.back"],
+        "linked_program_mode_sensor": "sensor.program_mode",
+    }
+    assert config_entry.options["entity_config"] == {
+        "valve.front": {"type": "sprinkler"},
+        "valve.back": {"type": "sprinkler"},
+    }
+
+
+async def test_options_flow_edit_and_remove_irrigation_system(
+    hass: HomeAssistant,
+) -> None:
+    """Test editing and removing an irrigation system through bridge options."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_NAME: "mock_name", CONF_PORT: 12345},
+        options={
+            "mode": "bridge",
+            "filter": {
+                "include_domains": ["valve"],
+                "include_entities": [],
+                "exclude_domains": [],
+                "exclude_entities": [],
+            },
+            "irrigation_systems": {"yard": {"name": "Yard", "zones": ["valve.front"]}},
+        },
+    )
+    config_entry.add_to_hass(hass)
+    hass.states.async_set("valve.front", "closed")
+    hass.states.async_set("valve.back", "closed")
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"domains": ["valve"], "include_exclude_mode": "include"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"entities": []}
+    )
+    assert result["step_id"] == "irrigation_systems"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "edit_irrigation_system"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"irrigation_system": "yard"}
+    )
+    assert result["step_id"] == "edit_irrigation_system_config"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "irrigation_system_name": "Garden",
+            "zones": ["valve.front", "valve.back"],
+        },
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "irrigation_systems"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "remove_irrigation_system"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"irrigation_system": "yard"}
+    )
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "finish_irrigation_systems"}
+    )
+    with patch("homeassistant.components.homekit.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "irrigation_systems" not in config_entry.options
+
+
 async def test_options_flow_exclude_mode_with_cameras(hass: HomeAssistant) -> None:
     """Test config flow options in exclude mode with cameras."""
 
