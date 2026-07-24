@@ -18,7 +18,6 @@ from homeassistant.components.input_number import (
     CONF_MAX as INPUT_NUMBER_CONF_MAX,
     CONF_MIN as INPUT_NUMBER_CONF_MIN,
     CONF_STEP as INPUT_NUMBER_CONF_STEP,
-    DOMAIN as INPUT_NUMBER_DOMAIN,
     SERVICE_SET_VALUE as INPUT_NUMBER_SERVICE_SET_VALUE,
 )
 from homeassistant.components.input_select import ATTR_OPTIONS, SERVICE_SELECT_OPTION
@@ -39,6 +38,7 @@ from homeassistant.components.vacuum import (
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_SUPPORTED_FEATURES,
+    ATTR_UNIT_OF_MEASUREMENT,
     CONF_TYPE,
     SERVICE_CLOSE_VALVE,
     SERVICE_OPEN_VALVE,
@@ -48,10 +48,12 @@ from homeassistant.const import (
     STATE_ON,
     STATE_OPEN,
     STATE_OPENING,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, State, callback, split_entity_id
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import DurationConverter
 
 from .accessories import TYPES, HomeAccessory, HomeDriver
 from .const import (
@@ -401,19 +403,31 @@ class ValveBase(HomeAccessory):
     def set_duration(self, value: int) -> None:
         """Set default duration for how long the valve should remain open."""
         _LOGGER.debug("%s: Set default run time to %s", self.entity_id, value)
+        assert self.linked_duration_entity
+        linked_duration_domain = split_entity_id(self.linked_duration_entity)[0]
+        duration_state = self.hass.states.get(self.linked_duration_entity)
+        unit = (
+            duration_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+            if duration_state
+            else None
+        )
+        native_value = self._convert_duration(value, UnitOfTime.SECONDS, unit)
         self.async_call_service(
-            INPUT_NUMBER_DOMAIN,
+            linked_duration_domain,
             INPUT_NUMBER_SERVICE_SET_VALUE,
             {
                 ATTR_ENTITY_ID: self.linked_duration_entity,
-                INPUT_NUMBER_ATTR_VALUE: value,
+                INPUT_NUMBER_ATTR_VALUE: native_value,
             },
             value,
         )
 
     def get_duration(self) -> int:
         """Get the default duration from Home Assistant."""
-        duration_state = self._get_entity_state(self.linked_duration_entity)
+        linked_duration_entity = self.linked_duration_entity
+        if linked_duration_entity is None:
+            return 0
+        duration_state = self._get_entity_state(linked_duration_entity)
         if duration_state is None:
             _LOGGER.debug(
                 "%s: No linked duration entity state available", self.entity_id
@@ -422,7 +436,12 @@ class ValveBase(HomeAccessory):
 
         try:
             duration = float(duration_state)
-            return max(int(duration), 0)
+            state = self.hass.states.get(linked_duration_entity)
+            unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) if state else None
+            duration_seconds = self._convert_duration(
+                duration, unit, UnitOfTime.SECONDS
+            )
+            return max(int(duration_seconds), 0)
         except ValueError:
             _LOGGER.debug("%s: Cannot parse linked duration entity", self.entity_id)
             return 0
@@ -465,7 +484,19 @@ class ValveBase(HomeAccessory):
         attr_value = state.attributes.get(attr, fallback_value)
         if attr_value is None:
             return fallback_value
-        return int(attr_value)
+        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+        return int(self._convert_duration(attr_value, unit, UnitOfTime.SECONDS))
+
+    @staticmethod
+    def _convert_duration(
+        value: float, from_unit: str | None, to_unit: str | None
+    ) -> float:
+        """Convert a duration when both units are recognized."""
+        if from_unit not in DurationConverter.VALID_UNITS:
+            from_unit = UnitOfTime.SECONDS
+        if to_unit not in DurationConverter.VALID_UNITS:
+            to_unit = UnitOfTime.SECONDS
+        return DurationConverter.convert(value, from_unit, to_unit)
 
 
 @TYPES.register("ValveSwitch")
@@ -502,13 +533,28 @@ class ValveSwitch(ValveBase):
 class Valve(ValveBase):
     """Generate a Valve accessory from a HomeAssistant valve."""
 
-    def __init__(self, *args: Any) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        driver: HomeDriver,
+        name: str,
+        entity_id: str,
+        aid: int,
+        config: dict[str, Any],
+        *args: Any,
+    ) -> None:
         """Initialize a Valve accessory object."""
         super().__init__(
-            TYPE_VALVE,
+            config.get(CONF_TYPE, TYPE_VALVE),
             VALVE_OPEN_STATES,
             SERVICE_OPEN_VALVE,
             SERVICE_CLOSE_VALVE,
+            hass,
+            driver,
+            name,
+            entity_id,
+            aid,
+            config,
             *args,
         )
 
