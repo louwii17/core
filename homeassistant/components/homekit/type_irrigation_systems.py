@@ -58,13 +58,7 @@ from .const import (
     SERV_IRRIGATION_SYSTEM,
     SERV_VALVE,
 )
-from .type_switches import (
-    VALVE_DURATION_MAX_DEFAULT,
-    VALVE_DURATION_MIN_DEFAULT,
-    VALVE_DURATION_STEP_DEFAULT,
-    VALVE_OPEN_STATES,
-    VALVE_REMAINING_TIME_MAX_DEFAULT,
-)
+from .type_switches import VALVE_OPEN_STATES, VALVE_REMAINING_TIME_MAX_DEFAULT
 from .util import cleanup_name_for_homekit
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,31 +106,28 @@ class IrrigationZone:
         self.char_set_duration: Characteristic | None = None
         self.char_remaining_duration: Characteristic | None = None
         if self.linked_duration_entity:
+            duration_properties = {}
+            for attribute, property_name in (
+                (CONF_MIN, PROP_MIN_VALUE),
+                (CONF_MAX, PROP_MAX_VALUE),
+                (CONF_STEP, PROP_MIN_STEP),
+            ):
+                if (value := self._duration_property(attribute)) is not None:
+                    duration_properties[property_name] = value
             self.char_set_duration = self.service.configure_char(
                 CHAR_SET_DURATION,
                 value=self.get_duration(),
                 setter_callback=self.set_duration,
-                properties={
-                    PROP_MIN_VALUE: self._duration_property(
-                        CONF_MIN, VALVE_DURATION_MIN_DEFAULT
-                    ),
-                    PROP_MAX_VALUE: self._duration_property(
-                        CONF_MAX, VALVE_DURATION_MAX_DEFAULT
-                    ),
-                    PROP_MIN_STEP: self._duration_property(
-                        CONF_STEP, VALVE_DURATION_STEP_DEFAULT
-                    ),
-                },
+                properties=duration_properties,
             )
         if self.linked_end_time_entity:
+            remaining_duration_max = (
+                self._duration_property(CONF_MAX) or VALVE_REMAINING_TIME_MAX_DEFAULT
+            )
             self.char_remaining_duration = self.service.configure_char(
                 CHAR_REMAINING_DURATION,
                 getter_callback=self.get_remaining_duration,
-                properties={
-                    PROP_MAX_VALUE: self._duration_property(
-                        CONF_MAX, VALVE_REMAINING_TIME_MAX_DEFAULT
-                    )
-                },
+                properties={PROP_MAX_VALUE: remaining_duration_max},
             )
 
         self.update(self.hass.states.get(entity_id))
@@ -212,16 +203,16 @@ class IrrigationZone:
             return self.get_duration() if self.char_in_use.value else 0
         return max(int((end_time - dt_util.utcnow()).total_seconds()), 0)
 
-    def _duration_property(self, attribute: str, default: int) -> int:
+    def _duration_property(self, attribute: str) -> int | None:
         """Convert a linked duration entity property to seconds."""
         if self.linked_duration_entity is None:
-            return default
+            return None
         state = self.hass.states.get(self.linked_duration_entity)
         if state is None:
-            return default
+            return None
         value = state.attributes.get(attribute)
         if value is None:
-            return default
+            return None
         return int(
             self._convert_duration(
                 value,

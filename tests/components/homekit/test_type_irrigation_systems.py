@@ -74,7 +74,11 @@ async def test_irrigation_system(
         accessory.zones["valve.back"].service,
     ]
     assert accessory.char_program_mode.value == 1
-    assert accessory.zones["valve.front"].char_set_duration.value == 600
+    front_duration = accessory.zones["valve.front"].char_set_duration
+    assert front_duration.value == 600
+    assert front_duration.properties["minValue"] == 60
+    assert front_duration.properties["maxValue"] == 3600
+    assert front_duration.properties["minStep"] == 60
 
     open_calls = async_mock_service(hass, "valve", SERVICE_OPEN_VALVE)
     close_calls = async_mock_service(hass, "valve", SERVICE_CLOSE_VALVE)
@@ -94,3 +98,29 @@ async def test_irrigation_system(
     accessory.char_active.client_update_value(0)
     await hass.async_block_till_done()
     assert close_calls[0].data[ATTR_ENTITY_ID] == "valve.front"
+
+
+async def test_irrigation_duration_uses_homekit_defaults(
+    hass: HomeAssistant, hk_driver
+) -> None:
+    """Test missing linked duration metadata retains HomeKit defaults."""
+    hass.states.async_set("valve.front", STATE_CLOSED)
+
+    accessory = IrrigationSystem(
+        hass,
+        hk_driver,
+        "Yard",
+        "irrigation_system.yard",
+        2,
+        {CONF_ZONES: ["valve.front"]},
+        {
+            "valve.front": {
+                CONF_LINKED_VALVE_DURATION: "number.missing_duration",
+            }
+        },
+    )
+
+    duration = accessory.zones["valve.front"].char_set_duration
+    assert duration.properties["minValue"] == 0
+    assert duration.properties["maxValue"] == 3600
+    assert duration.properties["minStep"] == 1
