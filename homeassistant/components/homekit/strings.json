@@ -18,12 +18,26 @@
     }
   },
   "options": {
+    "error": {
+      "duplicate_irrigation_zone": "A valve can only belong to one irrigation system.",
+      "required_irrigation_name": "Enter a name for the irrigation system.",
+      "required_irrigation_zone": "Select at least one zone valve."
+    },
     "step": {
       "accessory": {
         "data": {
           "entities": "Entity"
         },
         "title": "Select the entity for the accessory"
+      },
+      "add_irrigation_system": {
+        "data": {
+          "irrigation_system_name": "Name",
+          "linked_program_mode_sensor": "Program mode sensor",
+          "zones": "Zone valves"
+        },
+        "description": "Create one HomeKit irrigation system containing the selected sprinkler zones.",
+        "title": "Add irrigation system"
       },
       "bridged_device_triggers": {
         "data": {
@@ -39,6 +53,20 @@
         },
         "description": "Check all cameras that support native H.264 streams. If the camera does not output a H.264 stream, the system will transcode the video to H.264 for HomeKit. Transcoding requires a performant CPU and is unlikely to work on single-board computers.",
         "title": "Camera configuration"
+      },
+      "edit_irrigation_system": {
+        "data": {
+          "irrigation_system": "Irrigation system"
+        },
+        "title": "Select irrigation system to edit"
+      },
+      "edit_irrigation_system_config": {
+        "data": {
+          "irrigation_system_name": "[%key:component::homekit::options::step::add_irrigation_system::data::irrigation_system_name%]",
+          "linked_program_mode_sensor": "[%key:component::homekit::options::step::add_irrigation_system::data::linked_program_mode_sensor%]",
+          "zones": "[%key:component::homekit::options::step::add_irrigation_system::data::zones%]"
+        },
+        "title": "Edit irrigation system"
       },
       "exclude": {
         "data": {
@@ -62,6 +90,21 @@
         },
         "description": "HomeKit can be configured to expose a bridge or a single accessory. In accessory mode, only a single entity can be used. Accessory mode is required for media players with the TV or RECEIVER device class to function properly. Entities in the \u201cDomains to include\u201d will be included to HomeKit. You will be able to select which entities to include or exclude from this list on the next screen.",
         "title": "Select mode and domains."
+      },
+      "irrigation_systems": {
+        "menu_options": {
+          "add_irrigation_system": "Add irrigation system",
+          "edit_irrigation_system": "Edit irrigation system",
+          "finish_irrigation_systems": "Finish",
+          "remove_irrigation_system": "Remove irrigation system"
+        },
+        "title": "Irrigation systems"
+      },
+      "remove_irrigation_system": {
+        "data": {
+          "irrigation_system": "[%key:component::homekit::options::step::edit_irrigation_system::data::irrigation_system%]"
+        },
+        "title": "Select irrigation system to remove"
       },
       "yaml": {
         "description": "This entry is controlled via YAML",

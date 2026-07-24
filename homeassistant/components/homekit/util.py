@@ -68,6 +68,7 @@ from .const import (
     CONF_LINKED_MOTION_SENSOR,
     CONF_LINKED_OBSTRUCTION_SENSOR,
     CONF_LINKED_PM25_SENSOR,
+    CONF_LINKED_PROGRAM_MODE_SENSOR,
     CONF_LINKED_TEMPERATURE_SENSOR,
     CONF_LINKED_VALVE_DURATION,
     CONF_LINKED_VALVE_END_TIME,
@@ -85,6 +86,7 @@ from .const import (
     CONF_VIDEO_MAP,
     CONF_VIDEO_PACKET_SIZE,
     CONF_VIDEO_PROFILE_NAMES,
+    CONF_ZONES,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_MAP,
     DEFAULT_AUDIO_PACKET_SIZE,
@@ -386,6 +388,41 @@ def validate_entity_config(values: dict) -> dict[str, dict]:
 
         entities[entity] = config
     return entities
+
+
+IRRIGATION_SYSTEM_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_NAME): vol.All(cv.string, vol.Length(min=1, max=64)),
+        vol.Required(CONF_ZONES): vol.All(
+            cv.ensure_list,
+            [cv.entity_domain("valve")],
+            vol.Length(min=1),
+            vol.Unique(),
+        ),
+        vol.Optional(CONF_LINKED_PROGRAM_MODE_SENSOR): cv.entity_domain(sensor.DOMAIN),
+    }
+)
+
+
+def validate_irrigation_systems(values: dict) -> dict[str, dict]:
+    """Validate HomeKit irrigation system configuration."""
+    if not isinstance(values, dict):
+        raise vol.Invalid("expected a dictionary")
+
+    systems: dict[str, dict] = {}
+    configured_zones: set[str] = set()
+    for system_id, config in values.items():
+        system_id = cv.slug(system_id)
+        system = IRRIGATION_SYSTEM_SCHEMA(config)
+        duplicate_zones = configured_zones.intersection(system[CONF_ZONES])
+        if duplicate_zones:
+            raise vol.Invalid(
+                f"Valve entities may only belong to one irrigation system: "
+                f"{', '.join(sorted(duplicate_zones))}"
+            )
+        configured_zones.update(system[CONF_ZONES])
+        systems[system_id] = system
+    return systems
 
 
 def get_media_player_features(state: State) -> list[str]:

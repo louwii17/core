@@ -7,6 +7,7 @@ import random
 import re
 import string
 from typing import Any, Final, TypedDict, override
+from uuid import uuid4
 
 import voluptuous as vol
 
@@ -15,6 +16,7 @@ from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.remote import DOMAIN as REMOTE_DOMAIN
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.valve import DOMAIN as VALVE_DOMAIN
 from homeassistant.config_entries import (
     SOURCE_IMPORT,
@@ -31,6 +33,7 @@ from homeassistant.const import (
     CONF_ENTITY_ID,
     CONF_NAME,
     CONF_PORT,
+    CONF_TYPE,
 )
 from homeassistant.core import HomeAssistant, callback, split_entity_id
 from homeassistant.helpers import (
@@ -46,8 +49,11 @@ from .const import (
     CONF_EXCLUDE_ACCESSORY_MODE,
     CONF_FILTER,
     CONF_HOMEKIT_MODE,
+    CONF_IRRIGATION_SYSTEMS,
+    CONF_LINKED_PROGRAM_MODE_SENSOR,
     CONF_SUPPORT_AUDIO,
     CONF_VIDEO_CODEC,
+    CONF_ZONES,
     DEFAULT_CONFIG_FLOW_PORT,
     DEFAULT_HOMEKIT_MODE,
     DOMAIN,
@@ -55,6 +61,7 @@ from .const import (
     HOMEKIT_MODE_BRIDGE,
     HOMEKIT_MODES,
     SHORT_BRIDGE_NAME,
+    TYPE_SPRINKLER,
     VIDEO_CODEC_COPY,
 )
 from .util import async_find_next_available_port, state_needs_accessory_mode
@@ -62,6 +69,8 @@ from .util import async_find_next_available_port, state_needs_accessory_mode
 CONF_CAMERA_AUDIO = "camera_audio"
 CONF_CAMERA_COPY = "camera_copy"
 CONF_INCLUDE_EXCLUDE_MODE = "include_exclude_mode"
+CONF_IRRIGATION_SYSTEM = "irrigation_system"
+CONF_IRRIGATION_SYSTEM_NAME = "irrigation_system_name"
 
 MODE_INCLUDE = "include"
 MODE_EXCLUDE = "exclude"
@@ -374,6 +383,175 @@ class OptionsFlowHandler(OptionsFlow):
         """Initialize options flow."""
         self.hk_options: dict[str, Any] = {}
         self.included_cameras: list[str] = []
+        self._selected_irrigation_system: str | None = None
+
+    async def async_step_irrigation_systems(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage grouped irrigation system accessories."""
+        if self.hk_options[CONF_HOMEKIT_MODE] != HOMEKIT_MODE_BRIDGE:
+            return await self.async_step_bridged_device_triggers()
+        if VALVE_DOMAIN not in self.hk_options.get(
+            CONF_DOMAINS, []
+        ) and not self.hk_options.get(CONF_IRRIGATION_SYSTEMS):
+            return await self.async_step_bridged_device_triggers()
+        menu_options = ["add_irrigation_system"]
+        if self.hk_options.get(CONF_IRRIGATION_SYSTEMS):
+            menu_options.extend(["edit_irrigation_system", "remove_irrigation_system"])
+        menu_options.append("finish_irrigation_systems")
+        return self.async_show_menu(
+            step_id="irrigation_systems", menu_options=menu_options
+        )
+
+    async def async_step_add_irrigation_system(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add an irrigation system."""
+        self._selected_irrigation_system = None
+        return await self._async_irrigation_system_form(user_input)
+
+    async def async_step_edit_irrigation_system(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select an irrigation system to edit."""
+        if user_input is not None:
+            self._selected_irrigation_system = user_input[CONF_IRRIGATION_SYSTEM]
+            return await self._async_irrigation_system_form(None)
+        return self._async_irrigation_system_selector("edit_irrigation_system")
+
+    async def async_step_remove_irrigation_system(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Remove an irrigation system."""
+        if user_input is not None:
+            systems = self.hk_options[CONF_IRRIGATION_SYSTEMS]
+            del systems[user_input[CONF_IRRIGATION_SYSTEM]]
+            if not systems:
+                del self.hk_options[CONF_IRRIGATION_SYSTEMS]
+            return await self.async_step_irrigation_systems()
+        return self._async_irrigation_system_selector("remove_irrigation_system")
+
+    async def async_step_edit_irrigation_system_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit the selected irrigation system."""
+        return await self._async_irrigation_system_form(user_input)
+
+    async def async_step_finish_irrigation_systems(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish irrigation system configuration."""
+        return await self.async_step_bridged_device_triggers()
+
+    @callback
+    def _async_irrigation_system_selector(self, step_id: str) -> ConfigFlowResult:
+        """Show a selector for a configured irrigation system."""
+        systems = self.hk_options.get(CONF_IRRIGATION_SYSTEMS, {})
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IRRIGATION_SYSTEM): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(
+                                    value=system_id, label=config[CONF_NAME]
+                                )
+                                for system_id, config in systems.items()
+                            ]
+                        )
+                    )
+                }
+            ),
+        )
+
+    async def _async_irrigation_system_form(
+        self, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        """Show and process the irrigation system editor."""
+        systems = self.hk_options.get(CONF_IRRIGATION_SYSTEMS, {})
+        selected_id = self._selected_irrigation_system
+        current = systems.get(selected_id, {}) if selected_id else {}
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            zones = user_input[CONF_ZONES]
+            zones_in_other_systems = {
+                entity_id
+                for system_id, system in systems.items()
+                if system_id != selected_id
+                for entity_id in system[CONF_ZONES]
+            }
+            if not user_input[CONF_IRRIGATION_SYSTEM_NAME].strip():
+                errors[CONF_IRRIGATION_SYSTEM_NAME] = "required_irrigation_name"
+            if not zones:
+                errors[CONF_ZONES] = "required_irrigation_zone"
+            elif zones_in_other_systems.intersection(zones):
+                errors["base"] = "duplicate_irrigation_zone"
+            if not errors:
+                config = {
+                    CONF_NAME: user_input[CONF_IRRIGATION_SYSTEM_NAME].strip(),
+                    CONF_ZONES: zones,
+                }
+                if program_mode := user_input.get(CONF_LINKED_PROGRAM_MODE_SENSOR):
+                    config[CONF_LINKED_PROGRAM_MODE_SENSOR] = program_mode
+                system_id = selected_id or uuid4().hex
+                if CONF_IRRIGATION_SYSTEMS not in self.hk_options:
+                    systems = self.hk_options.setdefault(CONF_IRRIGATION_SYSTEMS, {})
+                systems[system_id] = config
+                entity_config = self.hk_options.setdefault(CONF_ENTITY_CONFIG, {})
+                for entity_id in zones:
+                    entity_config.setdefault(entity_id, {})[CONF_TYPE] = TYPE_SPRINKLER
+                self._selected_irrigation_system = None
+                return await self.async_step_irrigation_systems()
+
+        default_name = (
+            user_input.get(CONF_IRRIGATION_SYSTEM_NAME, "")
+            if user_input is not None
+            else current.get(CONF_NAME, "")
+        )
+        default_zones = (
+            user_input.get(CONF_ZONES, [])
+            if user_input is not None
+            else current.get(CONF_ZONES, [])
+        )
+        current_program_mode = (
+            user_input.get(CONF_LINKED_PROGRAM_MODE_SENSOR)
+            if user_input is not None
+            else current.get(CONF_LINKED_PROGRAM_MODE_SENSOR)
+        )
+        program_mode_key = vol.Optional(CONF_LINKED_PROGRAM_MODE_SENSOR)
+        if current_program_mode:
+            program_mode_key = vol.Optional(
+                CONF_LINKED_PROGRAM_MODE_SENSOR, default=current_program_mode
+            )
+
+        return self.async_show_form(
+            step_id=(
+                "edit_irrigation_system_config"
+                if selected_id
+                else "add_irrigation_system"
+            ),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_IRRIGATION_SYSTEM_NAME,
+                        default=default_name,
+                    ): selector.TextSelector(),
+                    vol.Required(
+                        CONF_ZONES, default=default_zones
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=VALVE_DOMAIN, multiple=True
+                        )
+                    ),
+                    program_mode_key: selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain=SENSOR_DOMAIN)
+                    ),
+                }
+            ),
+            errors=errors,
+        )
 
     async def async_step_yaml(
         self, user_input: dict[str, Any] | None = None
@@ -447,7 +625,7 @@ class OptionsFlowHandler(OptionsFlow):
                 if not entity_config:
                     all_entity_config.pop(entity_id)
 
-            return await self.async_step_bridged_device_triggers()
+            return await self.async_step_irrigation_systems()
 
         cameras_with_audio = []
         cameras_with_copy = []
@@ -496,7 +674,7 @@ class OptionsFlowHandler(OptionsFlow):
             hk_options[CONF_FILTER] = entity_filter
             if self.included_cameras:
                 return await self.async_step_cameras()
-            return await self.async_step_bridged_device_triggers()
+            return await self.async_step_irrigation_systems()
 
         entity_filter = hk_options.get(CONF_FILTER, {})
         entities = entity_filter.get(CONF_INCLUDE_ENTITIES, [])
@@ -540,7 +718,7 @@ class OptionsFlowHandler(OptionsFlow):
             hk_options[CONF_FILTER] = _async_build_entities_filter(domains, entities)
             if self.included_cameras:
                 return await self.async_step_cameras()
-            return await self.async_step_bridged_device_triggers()
+            return await self.async_step_irrigation_systems()
 
         entity_filter: EntityFilterDict = hk_options.get(CONF_FILTER, {})
         entities = entity_filter.get(CONF_INCLUDE_ENTITIES, [])
@@ -595,7 +773,7 @@ class OptionsFlowHandler(OptionsFlow):
             )
             if self.included_cameras:
                 return await self.async_step_cameras()
-            return await self.async_step_bridged_device_triggers()
+            return await self.async_step_irrigation_systems()
 
         entity_filter = self.hk_options.get(CONF_FILTER, {})
         entities = entity_filter.get(CONF_INCLUDE_ENTITIES, [])

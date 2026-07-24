@@ -41,6 +41,9 @@ CONF_AUDIO_CODEC = "audio_codec"
 CONF_AUDIO_MAP = "audio_map"
 CONF_AUDIO_PACKET_SIZE = "audio_packet_size"
 CONF_ENTITY_CONFIG = "entity_config"
+CONF_IRRIGATION_SYSTEMS = "irrigation_systems"
+CONF_LINKED_PROGRAM_MODE_SENSOR = "linked_program_mode_sensor"
+CONF_ZONES = "zones"
 CONF_FEATURE = "feature"
 CONF_FEATURE_LIST = "feature_list"
 CONF_FILTER = "filter"
@@ -147,6 +150,7 @@ SERV_FILTER_MAINTENANCE = "FilterMaintenance"
 SERV_GARAGE_DOOR_OPENER = "GarageDoorOpener"
 SERV_HUMIDIFIER_DEHUMIDIFIER = "HumidifierDehumidifier"
 SERV_HUMIDITY_SENSOR = "HumiditySensor"
+SERV_IRRIGATION_SYSTEM = "IrrigationSystem"
 SERV_INPUT_SOURCE = "InputSource"
 SERV_LEAK_SENSOR = "LeakSensor"
 SERV_LIGHT_SENSOR = "LightSensor"
@@ -228,6 +232,7 @@ CHAR_OCCUPANCY_DETECTED = "OccupancyDetected"
 CHAR_ON = "On"
 CHAR_OUTLET_IN_USE = "OutletInUse"
 CHAR_POSITION_STATE = "PositionState"
+CHAR_PROGRAM_MODE = "ProgramMode"
 CHAR_PROGRAMMABLE_SWITCH_EVENT = "ProgrammableSwitchEvent"
 CHAR_REMAINING_DURATION = "RemainingDuration"
 CHAR_REMOTE_KEY = "RemoteKey"
@@ -315,6 +320,7 @@ CONFIG_OPTIONS = [
     CONF_ENTITY_CONFIG,
     CONF_HOMEKIT_MODE,
     CONF_DEVICES,
+    CONF_IRRIGATION_SYSTEMS,
 ]
 
 # ### Maximum Lengths ###

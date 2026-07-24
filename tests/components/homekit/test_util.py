@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import voluptuous as vol
 
+from homeassistant.components.homekit import BRIDGE_SCHEMA
 from homeassistant.components.homekit.const import (
     BRIDGE_NAME,
     CONF_AUDIO_CODEC,
@@ -15,6 +16,7 @@ from homeassistant.components.homekit.const import (
     CONF_LINKED_BATTERY_SENSOR,
     CONF_LINKED_DOORBELL_SENSOR,
     CONF_LINKED_MOTION_SENSOR,
+    CONF_LINKED_PROGRAM_MODE_SENSOR,
     CONF_LINKED_VALVE_DURATION,
     CONF_LINKED_VALVE_END_TIME,
     CONF_LOW_BATTERY_THRESHOLD,
@@ -29,6 +31,7 @@ from homeassistant.components.homekit.const import (
     CONF_VIDEO_MAP,
     CONF_VIDEO_PACKET_SIZE,
     CONF_VIDEO_PROFILE_NAMES,
+    CONF_ZONES,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_MAP,
     DEFAULT_AUDIO_PACKET_SIZE,
@@ -69,6 +72,7 @@ from homeassistant.components.homekit.util import (
     temperature_to_homekit,
     temperature_to_states,
     validate_entity_config as vec,
+    validate_irrigation_systems,
     validate_media_player_features,
 )
 from homeassistant.components.persistent_notification import async_create, async_dismiss
@@ -299,6 +303,53 @@ def test_validate_entity_config() -> None:
             CONF_LOW_BATTERY_THRESHOLD: DEFAULT_LOW_BATTERY_THRESHOLD,
         }
     }
+
+
+def test_validate_irrigation_systems() -> None:
+    """Test irrigation system configuration validation."""
+    config = {
+        "back_yard": {
+            CONF_NAME: "Back Yard",
+            CONF_ZONES: ["valve.front", "valve.back"],
+            CONF_LINKED_PROGRAM_MODE_SENSOR: "sensor.program_mode",
+        }
+    }
+    assert validate_irrigation_systems(config) == config
+
+    invalid_configs = [
+        [],
+        {"Back Yard": {CONF_NAME: "Back Yard", CONF_ZONES: ["valve.front"]}},
+        {"back_yard": {CONF_NAME: "Back Yard", CONF_ZONES: []}},
+        {"back_yard": {CONF_NAME: "Back Yard", CONF_ZONES: ["switch.front"]}},
+        {
+            "back_yard": {
+                CONF_NAME: "Back Yard",
+                CONF_ZONES: ["valve.front", "valve.front"],
+            }
+        },
+        {
+            "front": {CONF_NAME: "Front", CONF_ZONES: ["valve.shared"]},
+            "back": {CONF_NAME: "Back", CONF_ZONES: ["valve.shared"]},
+        },
+    ]
+    for invalid_config in invalid_configs:
+        with pytest.raises(vol.Invalid):
+            validate_irrigation_systems(invalid_config)
+
+    validated = BRIDGE_SCHEMA(
+        {
+            "mode": "bridge",
+            "irrigation_systems": config,
+        }
+    )
+    assert validated["irrigation_systems"] == config
+    with pytest.raises(vol.Invalid):
+        BRIDGE_SCHEMA(
+            {
+                "mode": "accessory",
+                "irrigation_systems": config,
+            }
+        )
 
 
 def test_validate_media_player_features() -> None:

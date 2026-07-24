@@ -23,6 +23,7 @@ from homeassistant.components.homekit import (
     HomeKit,
 )
 from homeassistant.components.homekit.accessories import HomeBridge
+from homeassistant.components.homekit.aidmanager import AccessoryAidStorage
 from homeassistant.components.homekit.const import (
     BRIDGE_NAME,
     BRIDGE_SERIAL_NUMBER,
@@ -35,6 +36,7 @@ from homeassistant.components.homekit.const import (
     SERVICE_HOMEKIT_UNPAIR,
 )
 from homeassistant.components.homekit.models import HomeKitEntryData
+from homeassistant.components.homekit.type_irrigation_systems import IrrigationSystem
 from homeassistant.components.homekit.type_triggers import DeviceTriggerAccessory
 from homeassistant.components.homekit.util import get_persist_fullpath_for_entry_id
 from homeassistant.components.light import (
@@ -127,6 +129,8 @@ def _mock_homekit(
     homekit_mode: str,
     entity_filter: EntityFilter | None = None,
     devices: list[str] | None = None,
+    irrigation_systems: dict[str, dict[str, Any]] | None = None,
+    entity_config: dict[str, dict[str, Any]] | None = None,
 ) -> HomeKit:
     return HomeKit(
         hass=hass,
@@ -135,12 +139,13 @@ def _mock_homekit(
         ip_address=None,
         entity_filter=entity_filter or generate_filter([], [], [], []),
         exclude_accessory_mode=False,
-        entity_config={},
+        entity_config=entity_config or {},
         homekit_mode=homekit_mode,
         advertise_ips=None,
         entry_id=entry.entry_id,
         entry_title=entry.title,
         devices=devices,
+        irrigation_systems=irrigation_systems,
     )
 
 
@@ -200,6 +205,7 @@ async def test_setup_min(hass: HomeAssistant) -> None:
         entry.entry_id,
         entry.title,
         devices=[],
+        irrigation_systems={},
     )
 
     # Test auto start enabled
@@ -245,6 +251,7 @@ async def test_removing_entry(port_mock, hass: HomeAssistant) -> None:
         entry.entry_id,
         entry.title,
         devices=[],
+        irrigation_systems={},
     )
 
     # Test auto start enabled
@@ -505,6 +512,49 @@ async def test_homekit_add_accessory(hass: HomeAssistant, mock_hap) -> None:
         assert homekit.bridge.add_accessory.called
 
         await homekit.async_stop()
+
+
+async def test_irrigation_system_replaces_standalone_zone_accessories(
+    hass: HomeAssistant, hk_driver
+) -> None:
+    """Test grouped zones are only exposed inside their irrigation system."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_NAME: "mock_name", CONF_PORT: 12345}
+    )
+    hass.states.async_set("valve.front", "closed")
+    hass.states.async_set("valve.back", "closed")
+    hass.states.async_set("light.porch", "on")
+    homekit = _mock_homekit(
+        hass,
+        entry,
+        HOMEKIT_MODE_BRIDGE,
+        irrigation_systems={
+            "yard": {
+                CONF_NAME: "Yard",
+                "zones": ["valve.front", "valve.back"],
+            }
+        },
+        entity_config={
+            "valve.front": {"type": "sprinkler"},
+            "valve.back": {"type": "sprinkler"},
+        },
+    )
+    homekit.driver = hk_driver
+    homekit.aid_storage = AccessoryAidStorage(hass, entry.entry_id)
+    await homekit.aid_storage.async_initialize()
+
+    bridge = await homekit._async_create_bridge_accessory(hass.states.async_all())
+
+    assert len(bridge.accessories) == 2
+    assert (
+        sum(isinstance(acc, IrrigationSystem) for acc in bridge.accessories.values())
+        == 1
+    )
+    assert {
+        acc.entity_id
+        for acc in bridge.accessories.values()
+        if not isinstance(acc, IrrigationSystem)
+    } == {"light.porch"}
 
 
 @pytest.mark.parametrize("acc_category", [CATEGORY_TELEVISION, CATEGORY_CAMERA])
